@@ -11,7 +11,6 @@ use std::{
 use anyhow::Result;
 use async_trait::async_trait;
 use boltz_client::lightning_invoice::Bolt11InvoiceDescription;
-use boltz_client::swaps::boltzv2;
 use boltz_client::ToHex;
 use boltz_client::{swaps::boltzv2::*, util::secrets::Preimage, Amount, Bolt11Invoice};
 use futures_util::stream::select_all;
@@ -26,7 +25,7 @@ use tokio::time::MissedTickBehavior;
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::error::LiquidSdkError;
-use crate::model::PaymentState::*;
+use crate::model::{PaymentState::*, Update};
 use crate::receive_swap::ReceiveSwapStateHandler;
 use crate::send_swap::SendSwapStateHandler;
 use crate::swapper::{BoltzSwapper, ReconnectHandler, Swapper, SwapperStatusStream};
@@ -41,9 +40,11 @@ use crate::{
     utils,
 };
 
-/// Claim tx feerate, in sats per vbyte.
-/// Since the  Liquid blocks are consistently empty for now, we hardcode the minimum feerate.
-pub const LIQUID_CLAIM_TX_FEERATE_MSAT: f32 = 100.0;
+/// The minimum acceptable fee rate when claiming using zero-conf
+pub const LIQUID_SDK_ZERO_CONF_FEE_RATE_TESTNET: f32 = 0.1;
+pub const LIQUID_SDK_ZERO_CONF_FEE_RATE_MAINNET: f32 = 0.01;
+/// The maximum acceptable amount in satoshi when claiming using zero-conf
+pub const LIQUID_SDK_ZERO_CONF_LIMIT_SAT: u64 = 100_000;
 
 pub const DEFAULT_DATA_DIR: &str = ".data";
 
@@ -224,20 +225,21 @@ impl LiquidSdk {
                       }
                     }
                     update = updates_stream.recv() => match update {
-                        Ok(boltzv2::Update { id, status }) => {
+                        Ok(update) => {
                             let _ = cloned.sync().await;
-                            match cloned.persister.fetch_send_swap_by_id(&id) {
+                            let id = update.get_swap_id();
+                            match cloned.persister.fetch_send_swap_by_id(id) {
                                 Ok(Some(_)) => {
-                                    match cloned.send_swap_state_handler.on_new_status(&status, &id).await {
-                                        Ok(_) => info!("Successfully handled Send Swap {id} update"),
+                                    match send_swap_state_handler.on_new_status(&update).await {
+                                        Ok(_) => info!("Succesfully handled Send Swap {id} update"),
                                         Err(e) => error!("Failed to handle Send Swap {id} update: {e}")
                                     }
                                 }
                                 _ => {
-                                    match cloned.persister.fetch_receive_swap(&id) {
+                                    match cloned.persister.fetch_receive_swap(id) {
                                         Ok(Some(_)) => {
-                                            match cloned.receive_swap_state_handler.on_new_status(&status, &id).await {
-                                                Ok(_) => info!("Successfully handled Receive Swap {id} update"),
+                                            match cloned.try_handle_receive_swap_boltz_status(&update).await {
+                                                Ok(_) => info!("Succesfully handled Receive Swap {id} update"),
                                                 Err(e) => error!("Failed to handle Receive Swap {id} update: {e}")
                                             }
                                         }
