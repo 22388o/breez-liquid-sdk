@@ -243,7 +243,7 @@ impl SendSwapStateHandler {
             &send_swap.id
         );
         let output_address = self.onchain_wallet.next_unused_address().await?.to_string();
-        let claim_tx_details = self.swapper.get_claim_tx_details(send_swap)?;
+        let claim_tx_details = self.swapper.get_send_claim_tx_details(send_swap)?;
         self.update_swap_info(
             &send_swap.id,
             Complete,

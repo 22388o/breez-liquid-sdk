@@ -9,8 +9,8 @@ use boltz_client::error::Error;
 use boltz_client::network::electrum::ElectrumConfig;
 use boltz_client::network::Chain;
 use boltz_client::swaps::boltzv2::{
-    self, BoltzApiClientV2, ClaimTxResponse, CreateReverseRequest, CreateReverseResponse,
-    CreateSubmarineRequest, CreateSubmarineResponse, ReversePair, SubmarinePair,
+    self, BoltzApiClientV2, CreateReverseRequest, CreateReverseResponse, CreateSubmarineRequest,
+    CreateSubmarineResponse, ReversePair, SubmarineClaimTxResponse, SubmarinePair,
 };
 use boltz_client::util::secrets::Preimage;
 use boltz_client::{Amount, Bolt11Invoice, LBtcSwapTxV2};
@@ -67,17 +67,20 @@ pub trait Swapper: Send + Sync {
         current_height: u32,
     ) -> Result<String, PaymentError>;
 
-    /// Get claim tx details which includes the preimage as a proof of payment.
+    /// Get send swap claim tx details which includes the preimage as a proof of payment.
     /// It is used to validate the preimage before claiming which is the reason why we need to separate
     /// the claim into two steps.
-    fn get_claim_tx_details(&self, swap: &SendSwap) -> Result<ClaimTxResponse, PaymentError>;
+    fn get_send_claim_tx_details(
+        &self,
+        swap: &SendSwap,
+    ) -> Result<SubmarineClaimTxResponse, PaymentError>;
 
     /// Claim send swap cooperatively. Here the remote swapper is the one that claims.
     /// We are helping to use key spend path for cheaper fees.
     fn claim_send_swap_cooperative(
         &self,
         swap: &SendSwap,
-        claim_tx_response: ClaimTxResponse,
+        claim_tx_response: SubmarineClaimTxResponse,
         output_address: &str,
     ) -> Result<(), PaymentError>;
 
@@ -258,19 +261,23 @@ impl Swapper for BoltzSwapper {
     /// Get claim tx details which includes the preimage as a proof of payment.
     /// It is used to validate the preimage before claiming which is the reason why we need to separate
     /// the claim into two steps.
-    fn get_claim_tx_details(&self, swap: &SendSwap) -> Result<ClaimTxResponse, PaymentError> {
-        let claim_tx_response = self.client.get_claim_tx_details(&swap.id)?;
+    fn get_send_claim_tx_details(
+        &self,
+        swap: &SendSwap,
+    ) -> Result<SubmarineClaimTxResponse, PaymentError> {
+        let claim_tx_response = self.client.get_submarine_claim_tx_details(&swap.id)?;
         info!("Received claim tx details: {:?}", &claim_tx_response);
 
         self.validate_send_swap_preimage(&swap.id, &swap.invoice, &claim_tx_response.preimage)?;
         Ok(claim_tx_response)
     }
+
     /// Claim send swap cooperatively. Here the remote swapper is the one that claims.
     /// We are helping to use key spend path for cheaper fees.
     fn claim_send_swap_cooperative(
         &self,
         swap: &SendSwap,
-        claim_tx_response: ClaimTxResponse,
+        claim_tx_response: SubmarineClaimTxResponse,
         output_address: &str,
     ) -> Result<(), PaymentError> {
         let swap_id = &swap.id;
@@ -279,11 +286,17 @@ impl Swapper for BoltzSwapper {
 
         self.validate_send_swap_preimage(swap_id, &swap.invoice, &claim_tx_response.preimage)?;
 
-        let (partial_sig, pub_nonce) =
-            refund_tx.submarine_partial_sig(&keypair, &claim_tx_response)?;
+        let (partial_sig, pub_nonce) = refund_tx.partial_sig(
+            &keypair,
+            &claim_tx_response.pub_nonce,
+            &claim_tx_response.transaction_hash,
+        )?;
 
-        self.client
-            .post_claim_tx_details(&swap_id.to_string(), pub_nonce, partial_sig)?;
+        self.client.post_submarine_claim_tx_details(
+            &swap_id.to_string(),
+            pub_nonce,
+            partial_sig,
+        )?;
         info!("Successfully sent claim details for swap-in {swap_id}");
         Ok(())
     }
