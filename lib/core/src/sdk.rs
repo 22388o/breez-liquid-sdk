@@ -25,7 +25,7 @@ use tokio::time::MissedTickBehavior;
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::error::LiquidSdkError;
-use crate::model::{PaymentState::*, Update};
+use crate::model::PaymentState::*;
 use crate::receive_swap::ReceiveSwapStateHandler;
 use crate::send_swap::SendSwapStateHandler;
 use crate::swapper::{BoltzSwapper, ReconnectHandler, Swapper, SwapperStatusStream};
@@ -39,12 +39,6 @@ use crate::{
     persist::Persister,
     utils,
 };
-
-/// The minimum acceptable fee rate when claiming using zero-conf
-pub const LIQUID_SDK_ZERO_CONF_FEE_RATE_TESTNET: f32 = 0.1;
-pub const LIQUID_SDK_ZERO_CONF_FEE_RATE_MAINNET: f32 = 0.01;
-/// The maximum acceptable amount in satoshi when claiming using zero-conf
-pub const LIQUID_SDK_ZERO_CONF_LIMIT_SAT: u64 = 100_000;
 
 pub const DEFAULT_DATA_DIR: &str = ".data";
 
@@ -103,6 +97,7 @@ impl LiquidSdk {
         );
 
         let receive_swap_state_handler = ReceiveSwapStateHandler::new(
+            config.clone(),
             onchain_wallet.clone(),
             persister.clone(),
             swapper.clone(),
@@ -230,7 +225,7 @@ impl LiquidSdk {
                             let id = update.get_swap_id();
                             match cloned.persister.fetch_send_swap_by_id(id) {
                                 Ok(Some(_)) => {
-                                    match send_swap_state_handler.on_new_status(&update).await {
+                                    match cloned.send_swap_state_handler.on_new_status(&update).await {
                                         Ok(_) => info!("Succesfully handled Send Swap {id} update"),
                                         Err(e) => error!("Failed to handle Send Swap {id} update: {e}")
                                     }
@@ -238,7 +233,7 @@ impl LiquidSdk {
                                 _ => {
                                     match cloned.persister.fetch_receive_swap(id) {
                                         Ok(Some(_)) => {
-                                            match cloned.try_handle_receive_swap_boltz_status(&update).await {
+                                            match cloned.receive_swap_state_handler.on_new_status(&update).await {
                                                 Ok(_) => info!("Succesfully handled Receive Swap {id} update"),
                                                 Err(e) => error!("Failed to handle Receive Swap {id} update: {e}")
                                             }
