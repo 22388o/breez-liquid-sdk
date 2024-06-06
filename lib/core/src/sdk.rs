@@ -514,6 +514,24 @@ impl LiquidSdk {
         Ok(lbtc_pair)
     }
 
+    fn validate_chain_pairs(&self, receiver_amount_sat: u64) -> Result<ChainPair, PaymentError> {
+        let lbtc_pair = self
+            .swapper
+            .get_chain_pairs()?
+            .ok_or(PaymentError::PairsNotFound)?;
+
+        lbtc_pair.limits.within(receiver_amount_sat)?;
+
+        let fees_sat = lbtc_pair.fees.total(receiver_amount_sat);
+
+        ensure_sdk!(
+            receiver_amount_sat > fees_sat,
+            PaymentError::AmountOutOfRange
+        );
+
+        Ok(lbtc_pair)
+    }
+
     /// Estimate the onchain fee for sending the given amount to the given destination address
     async fn estimate_onchain_tx_fee(&self, amount_sat: u64, address: &str) -> Result<u64> {
         Ok(self
@@ -757,6 +775,93 @@ impl LiquidSdk {
         self.status_stream.track_swap_id(&swap.id)?;
 
         let accept_zero_conf = swap.get_boltz_create_response()?.accept_zero_conf;
+        self.wait_for_payment(swap.id, accept_zero_conf)
+            .await
+            .map(|payment| SendPaymentResponse { payment })
+    }
+
+    pub async fn prepare_send_onchain_payment(
+        &self,
+        req: &PrepareSendOnchainRequest,
+    ) -> Result<PrepareSendOnchainResponse, PaymentError> {
+        self.ensure_is_started().await?;
+
+        let address = req.address.clone();
+        let amount_sat = req.amount_sat;
+        let lbtc_pair = self.validate_chain_pairs(amount_sat)?;
+
+        let lockup_fees_sat = self.estimate_lockup_tx_fee(amount_sat).await?;
+
+        Ok(PrepareSendOnchainResponse {
+            address,
+            amount_sat,
+            fees_sat: lbtc_pair.fees.total(amount_sat) + lockup_fees_sat,
+        })
+    }
+
+    pub async fn send_onchain_payment(
+        &self,
+        req: &PrepareSendOnchainResponse,
+    ) -> Result<SendPaymentResponse, PaymentError> {
+        self.ensure_is_started().await?;
+
+        let receiver_amount_sat = req.amount_sat;
+        let lbtc_pair = self.validate_chain_pairs(receiver_amount_sat)?;
+        let lockup_fees_sat = self.estimate_lockup_tx_fee(receiver_amount_sat).await?;
+
+        ensure_sdk!(
+            req.fees_sat == lbtc_pair.fees.total(receiver_amount_sat) + lockup_fees_sat,
+            PaymentError::InvalidOrExpiredFees
+        );
+
+        let preimage = Preimage::new();
+        let preimage_str = preimage.to_string().ok_or(PaymentError::InvalidPreimage)?;
+
+        let claim_keypair = utils::generate_keypair();
+        let claim_public_key = boltz_client::PublicKey {
+            compressed: true,
+            inner: claim_keypair.public_key(),
+        };
+        let refund_keypair = utils::generate_keypair();
+        let refund_public_key = boltz_client::PublicKey {
+            compressed: true,
+            inner: refund_keypair.public_key(),
+        };
+        let create_response = self.swapper.create_chain_swap(CreateChainRequest {
+            from: "L-BTC".to_string(),
+            to: "BTC".to_string(),
+            preimage_hash: preimage.sha256,
+            claim_public_key: Some(claim_public_key),
+            refund_public_key: Some(refund_public_key),
+            user_lock_amount: Some(receiver_amount_sat as u32), // TODO update our model
+            server_lock_amount: None,
+            pair_hash: Some(lbtc_pair.hash),
+            referral_id: None,
+        })?;
+
+        let swap_id = &create_response.id;
+        let create_response_json = ChainSwap::from_boltz_struct_to_json(&create_response, swap_id)?;
+
+        let payer_amount_sat = req.fees_sat + receiver_amount_sat;
+        let swap = ChainSwap {
+            id: swap_id.clone(),
+            payment_type: PaymentType::Send,
+            address: req.address.clone(),
+            preimage: preimage_str,
+            payer_amount_sat,
+            receiver_amount_sat,
+            create_response_json,
+            claim_private_key: claim_keypair.display_secret().to_string(),
+            refund_private_key: refund_keypair.display_secret().to_string(),
+            lockup_tx_id: None,
+            refund_tx_id: None,
+            created_at: utils::now(),
+            state: PaymentState::Created,
+        };
+        self.persister.insert_chain_swap(&swap)?;
+        self.status_stream.track_swap_id(&swap.id)?;
+
+        let accept_zero_conf = receiver_amount_sat <= lbtc_pair.limits.maximal_zero_conf;
         self.wait_for_payment(swap.id, accept_zero_conf)
             .await
             .map(|payment| SendPaymentResponse { payment })

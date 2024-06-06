@@ -9,8 +9,9 @@ use boltz_client::error::Error;
 use boltz_client::network::electrum::ElectrumConfig;
 use boltz_client::network::Chain;
 use boltz_client::swaps::boltzv2::{
-    self, BoltzApiClientV2, CreateReverseRequest, CreateReverseResponse, CreateSubmarineRequest,
-    CreateSubmarineResponse, ReversePair, SubmarineClaimTxResponse, SubmarinePair,
+    self, BoltzApiClientV2, ChainPair, CreateChainRequest, CreateChainResponse,
+    CreateReverseRequest, CreateReverseResponse, CreateSubmarineRequest, CreateSubmarineResponse,
+    ReversePair, SubmarineClaimTxResponse, SubmarinePair,
 };
 use boltz_client::util::secrets::Preimage;
 use boltz_client::{Amount, Bolt11Invoice, LBtcSwapTxV2};
@@ -41,11 +42,20 @@ pub trait SwapperStatusStream: Send + Sync {
 }
 
 pub trait Swapper: Send + Sync {
+    /// Create a new chain swap
+    fn create_chain_swap(
+        &self,
+        req: CreateChainRequest,
+    ) -> Result<CreateChainResponse, PaymentError>;
+
     /// Create a new send swap
     fn create_send_swap(
         &self,
         req: CreateSubmarineRequest,
     ) -> Result<CreateSubmarineResponse, PaymentError>;
+
+    /// Get a chain pair information
+    fn get_chain_pairs(&self) -> Result<Option<ChainPair>, PaymentError>;
 
     /// Get a submarine pair information
     fn get_submarine_pairs(&self) -> Result<Option<SubmarinePair>, PaymentError>;
@@ -171,12 +181,25 @@ impl BoltzSwapper {
 }
 
 impl Swapper for BoltzSwapper {
+    /// Create a new chain swap
+    fn create_chain_swap(
+        &self,
+        req: CreateChainRequest,
+    ) -> Result<CreateChainResponse, PaymentError> {
+        Ok(self.client.post_chain_req(req)?)
+    }
+
     /// Create a new send swap
     fn create_send_swap(
         &self,
         req: CreateSubmarineRequest,
     ) -> Result<CreateSubmarineResponse, PaymentError> {
         Ok(self.client.post_swap_req(&req)?)
+    }
+
+    /// Get a chain pair information
+    fn get_chain_pairs(&self) -> Result<Option<ChainPair>, PaymentError> {
+        Ok(self.client.get_chain_pairs()?.get_lbtc_to_btc_pair())
     }
 
     /// Get a submarine pair information

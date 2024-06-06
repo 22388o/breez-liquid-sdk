@@ -1,8 +1,7 @@
 use anyhow::{anyhow, Result};
 use boltz_client::network::Chain;
 use boltz_client::swaps::boltzv2::{
-    CreateReverseResponse, CreateSubmarineResponse, Leaf, SwapTree, BOLTZ_MAINNET_URL_V2,
-    BOLTZ_TESTNET_URL_V2,
+    CreateChainResponse, CreateReverseResponse, CreateSubmarineResponse, Leaf, Side, SwapTree, BOLTZ_MAINNET_URL_V2, BOLTZ_TESTNET_URL_V2
 };
 use boltz_client::{Keypair, LBtcSwapScriptV2, ToHex};
 use lwk_wollet::ElementsNetwork;
@@ -157,6 +156,24 @@ pub struct SendPaymentResponse {
     pub payment: Payment,
 }
 
+#[derive(Debug, Serialize, Clone)]
+pub struct PrepareSendOnchainRequest {
+    pub address: String,
+    pub amount_sat: u64,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct PrepareSendOnchainResponse {
+    pub address: String,
+    pub amount_sat: u64,
+    pub fees_sat: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SendOnchainPaymentResponse {
+    pub payment: Payment,
+}
+
 #[derive(Debug, Serialize)]
 pub struct GetInfoRequest {
     pub with_scan: bool,
@@ -189,14 +206,108 @@ pub struct RestoreRequest {
 
 #[derive(Clone, Debug)]
 pub(crate) enum Swap {
+    Chain(ChainSwap),
     Send(SendSwap),
     Receive(ReceiveSwap),
 }
 impl Swap {
     pub(crate) fn id(&self) -> String {
         match &self {
-            Swap::Send(SendSwap { id, .. }) | Swap::Receive(ReceiveSwap { id, .. }) => id.clone(),
+            Swap::Chain(ChainSwap { id, .. })
+            | Swap::Send(SendSwap { id, .. })
+            | Swap::Receive(ReceiveSwap { id, .. }) => id.clone(),
         }
+    }
+}
+
+/// A chain swap
+#[derive(Clone, Debug)]
+pub(crate) struct ChainSwap {
+    pub(crate) id: String,
+    pub(crate) payment_type: PaymentType,
+    pub(crate) address: String,
+    pub(crate) preimage: String,
+    pub(crate) payer_amount_sat: u64,
+    pub(crate) receiver_amount_sat: u64,
+    /// JSON representation of [crate::persist::send::InternalCreateChainResponse]
+    pub(crate) create_response_json: String,
+    /// Persisted only when the lockup tx is successfully broadcast
+    pub(crate) lockup_tx_id: Option<String>,
+    /// Persisted as soon as a refund tx is broadcast
+    pub(crate) refund_tx_id: Option<String>,
+    pub(crate) created_at: u32,
+    pub(crate) state: PaymentState,
+    pub(crate) claim_private_key: String,
+    pub(crate) refund_private_key: String,
+}
+impl ChainSwap {
+    pub(crate) fn get_claim_keypair(&self) -> Result<Keypair, PaymentError> {
+        utils::decode_keypair(&self.claim_private_key).map_err(Into::into)
+    }
+
+    pub(crate) fn get_refund_keypair(&self) -> Result<Keypair, PaymentError> {
+        utils::decode_keypair(&self.refund_private_key).map_err(Into::into)
+    }
+
+    pub(crate) fn get_boltz_create_response(&self) -> Result<CreateChainResponse> {
+        let internal_create_response: crate::persist::chain::InternalCreateChainResponse =
+            serde_json::from_str(&self.create_response_json).map_err(|e| {
+                anyhow!("Failed to deserialize InternalCreateSubmarineResponse: {e:?}")
+            })?;
+
+        Ok(CreateChainResponse {
+            id: self.id.clone(),
+            claim_details: internal_create_response.claim_details,
+            lockup_details: internal_create_response.lockup_details,
+        })
+    }
+
+    pub(crate) fn get_receive_swap_script(&self) -> Result<LBtcSwapScriptV2, PaymentError> {
+        LBtcSwapScriptV2::chain_from_swap_resp(
+            Side::Receive,
+            self.get_boltz_create_response()?.claim_details,
+            self.get_claim_keypair()?.public_key().into(),
+        )
+        .map_err(|e| PaymentError::Generic {
+            err: format!(
+                "Failed to create claim swap script for Chain Swap {}: {e:?}",
+                self.id
+            ),
+        })
+    }
+
+    pub(crate) fn get_send_swap_script(&self) -> Result<LBtcSwapScriptV2, PaymentError> {
+        LBtcSwapScriptV2::chain_from_swap_resp(
+            Side::Send,
+            self.get_boltz_create_response()?.lockup_details,
+            self.get_refund_keypair()?.public_key().into(),
+        )
+        .map_err(|e| PaymentError::Generic {
+            err: format!(
+                "Failed to create lockup swap script for Chain Swap {}: {e:?}",
+                self.id
+            ),
+        })
+    }
+
+    pub(crate) fn from_boltz_struct_to_json(
+        create_response: &CreateChainResponse,
+        expected_swap_id: &str,
+    ) -> Result<String, PaymentError> {
+        let internal_create_response =
+            crate::persist::chain::InternalCreateChainResponse::try_convert_from_boltz(
+                create_response,
+                expected_swap_id,
+            )?;
+
+        let create_response_json =
+            serde_json::to_string(&internal_create_response).map_err(|e| {
+                PaymentError::Generic {
+                    err: format!("Failed to serialize InternalCreateChainResponse: {e:?}"),
+                }
+            })?;
+
+        Ok(create_response_json)
     }
 }
 
