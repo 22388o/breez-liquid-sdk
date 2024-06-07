@@ -93,8 +93,9 @@ impl ReceiveSwapStateHandler {
                 debug!("[Receive Swap {id}] Amount is within valid range for zero-conf ({receiver_amount_sat} < {LIQUID_SDK_ZERO_CONF_LIMIT_SAT} sat)");
 
                 // If the transaction has RBF, see https://github.com/bitcoin/bips/blob/master/bip-0125.mediawiki
+                // TODO: Check for inherent RBF by ensuring all tx ancestors are confirmed
                 let rbf_explicit = lockup_tx.input.iter().any(|input| input.sequence.is_rbf());
-                // let rbf_implicit = lockup_tx_history.height < 0;
+                // let rbf_inherent = lockup_tx_history.height < 0;
 
                 if rbf_explicit {
                     debug!("[Receive Swap {id}] Lockup transaction signals RBF. Waiting for confirmation...");
@@ -140,7 +141,7 @@ impl ReceiveSwapStateHandler {
             }
             Ok(RevSwapStates::TransactionConfirmed) => {
                 match receive_swap.claim_tx_id {
-                    // We ensure that the lockup tx is actually confirmed
+                    // TODO: We need to ensure that the lockup tx is actually confirmed
                     // else if lockup_tx_history.height <= 0 {
                     //     return Err(anyhow!("Tx state mismatch: Lockup transaction was marked as confirmed by the swapper, but isn't."));
                     // }
