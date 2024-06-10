@@ -76,6 +76,13 @@ impl ReceiveSwapStateHandler {
             // The lockup tx is in the mempool and we accept 0-conf => try to claim
             // Execute 0-conf preconditions check
             Ok(RevSwapStates::TransactionMempool) => {
+                if let Some(claim_tx_id) = receive_swap.claim_tx_id {
+                    warn!(
+                        "Claim tx for Receive Swap {id} was already broadcast: txid {claim_tx_id}"
+                    );
+                    return Ok(());
+                }
+
                 let boltzv2::Update::TransactionMempool { transaction, .. } = update else {
                     return Err(anyhow!("Unexpected payload from Boltz status stream"));
                 };
@@ -117,32 +124,26 @@ impl ReceiveSwapStateHandler {
 
                 debug!("[Receive Swap {id}] Lockup tx fees are within acceptable range ({tx_fees} > {lower_bound_estimated_fees} sat). Proceeding with claim.");
 
-                match receive_swap.claim_tx_id {
-                    Some(claim_tx_id) => {
-                        warn!("Claim tx for Receive Swap {id} was already broadcast: txid {claim_tx_id}")
-                    }
-                    None => {
-                        self.update_swap_info(&receive_swap.id, Pending, None)
-                            .await?;
-                        match self.claim(&receive_swap).await {
-                            Ok(_) => {}
-                            Err(err) => match err {
-                                PaymentError::AlreadyClaimed => {
-                                    warn!("Funds already claimed for Receive Swap {id}")
-                                }
-                                _ => error!("Claim for Receive Swap {id} failed: {err}"),
-                            },
+                self.update_swap_info(&receive_swap.id, Pending, None)
+                    .await?;
+                match self.claim(&receive_swap).await {
+                    Ok(_) => {}
+                    Err(err) => match err {
+                        PaymentError::AlreadyClaimed => {
+                            warn!("Funds already claimed for Receive Swap {id}")
                         }
-                    }
+                        _ => error!("Claim for Receive Swap {id} failed: {err}"),
+                    },
                 }
                 Ok(())
             }
             Ok(RevSwapStates::TransactionConfirmed) => {
+                // TODO: We need to ensure that the lockup tx is actually confirmed
+                // if lockup_tx_history.height <= 0 {
+                //     return Err(anyhow!("Tx state mismatch: Lockup transaction was marked as confirmed by the swapper, but isn't."));
+                // }
+
                 match receive_swap.claim_tx_id {
-                    // TODO: We need to ensure that the lockup tx is actually confirmed
-                    // else if lockup_tx_history.height <= 0 {
-                    //     return Err(anyhow!("Tx state mismatch: Lockup transaction was marked as confirmed by the swapper, but isn't."));
-                    // }
                     Some(claim_tx_id) => {
                         warn!("Claim tx for Receive Swap {id} was already broadcast: txid {claim_tx_id}")
                     }
