@@ -77,10 +77,9 @@ impl ReceiveSwapStateHandler {
             // Execute 0-conf preconditions check
             Ok(RevSwapStates::TransactionMempool) => {
                 if let Some(claim_tx_id) = receive_swap.claim_tx_id {
-                    warn!(
+                    return Err(anyhow!(
                         "Claim tx for Receive Swap {id} was already broadcast: txid {claim_tx_id}"
-                    );
-                    return Ok(());
+                    ));
                 }
 
                 let boltzv2::Update::TransactionMempool { transaction, .. } = update else {
@@ -90,11 +89,10 @@ impl ReceiveSwapStateHandler {
                 let lockup_tx = utils::deserialize_tx_hex(&transaction.hex)?;
 
                 // If the amount is greater than the zero-conf limit
-                // TODO Make limit user-definable through config
                 let max_amount_sat = self.config.zero_conf_max_amount_sat();
                 let receiver_amount_sat = receive_swap.receiver_amount_sat;
                 if receiver_amount_sat > max_amount_sat {
-                    debug!("[Receive Swap {id}] Amount is too high to claim with zero-conf ({receiver_amount_sat} sat > {max_amount_sat} sat). Waiting for confirmation...");
+                    warn!("[Receive Swap {id}] Amount is too high to claim with zero-conf ({receiver_amount_sat} sat > {max_amount_sat} sat). Waiting for confirmation...");
                     return Ok(());
                 }
 
@@ -106,7 +104,7 @@ impl ReceiveSwapStateHandler {
                 // let rbf_inherent = lockup_tx_history.height < 0;
 
                 if rbf_explicit {
-                    debug!("[Receive Swap {id}] Lockup transaction signals RBF. Waiting for confirmation...");
+                    warn!("[Receive Swap {id}] Lockup transaction signals RBF. Waiting for confirmation...");
                     return Ok(());
                 }
 
@@ -118,7 +116,7 @@ impl ReceiveSwapStateHandler {
                 let lower_bound_estimated_fees = lockup_tx.vsize() as f32 * min_fee_rate * 0.8;
 
                 if lower_bound_estimated_fees > tx_fees as f32 {
-                    debug!("[Receive Swap {id}] Lockup tx fees are too low: Expected at least {lower_bound_estimated_fees} sat, got {tx_fees} sat. Waiting for confirmation...");
+                    warn!("[Receive Swap {id}] Lockup tx fees are too low: Expected at least {lower_bound_estimated_fees} sat, got {tx_fees} sat. Waiting for confirmation...");
                     return Ok(());
                 }
 

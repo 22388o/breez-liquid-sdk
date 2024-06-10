@@ -32,7 +32,7 @@ pub struct Config {
     /// Zero-conf minimum accepted fee-rate in sat/vbyte
     pub zero_conf_min_fee_rate: f32,
     /// Maximum amount in satoshi to accept zero-conf payments with
-    /// Defaults to [crate::receive_swap::DEFAULT_ZERO_CONF_LIMIT_SAT]
+    /// Defaults to [crate::receive_swap::DEFAULT_ZERO_CONF_MAX_SAT]
     pub zero_conf_max_amount_sat: Option<u64>,
 }
 
