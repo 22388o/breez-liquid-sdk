@@ -12,7 +12,7 @@ use lwk_wollet::hashes::{sha256, Hash};
 use tokio::sync::broadcast;
 
 use crate::model::PaymentState::{Complete, Created, Failed, Pending, TimedOut};
-use crate::model::{Config, SendSwap, Update};
+use crate::model::{Config, SendSwap};
 use crate::sdk::ChainService;
 use crate::swapper::Swapper;
 use crate::wallet::OnchainWallet;
