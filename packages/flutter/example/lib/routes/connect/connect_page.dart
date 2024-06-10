@@ -5,11 +5,11 @@ import 'package:flutter_breez_liquid_example/routes/connect/restore_page.dart';
 import 'package:flutter_breez_liquid_example/routes/home/home_page.dart';
 import 'package:flutter_breez_liquid_example/services/credentials_manager.dart';
 import 'package:flutter_breez_liquid_example/utils/config.dart';
-import 'package:path_provider/path_provider.dart';
 
 class ConnectPage extends StatefulWidget {
+  final BreezLiquidSDK liquidSDK;
   final CredentialsManager credentialsManager;
-  const ConnectPage({super.key, required this.credentialsManager});
+  const ConnectPage({super.key, required this.liquidSDK, required this.credentialsManager});
 
   @override
   State<ConnectPage> createState() => _ConnectPageState();
@@ -84,7 +84,7 @@ class _ConnectPageState extends State<ConnectPage> {
             context,
             MaterialPageRoute(
               builder: (BuildContext context) => HomePage(
-                liquidSDK: liquidSDK,
+                liquidSDK: widget.liquidSDK,
                 credentialsManager: widget.credentialsManager,
               ),
             ),
@@ -103,6 +103,6 @@ class _ConnectPageState extends State<ConnectPage> {
       config: config,
       mnemonic: mnemonic,
     );
-    return await connect(req: req);
+    return await widget.liquidSDK.connect(req: req);
   }
 }

@@ -11,7 +11,7 @@ import 'package:flutter_breez_liquid_example/services/credentials_manager.dart';
 
 class HomePage extends StatefulWidget {
   final CredentialsManager credentialsManager;
-  final BindingLiquidSdk liquidSDK;
+  final BreezLiquidSDK liquidSDK;
 
   const HomePage({super.key, required this.credentialsManager, required this.liquidSDK});
 
@@ -20,27 +20,6 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  Stream<GetInfoResponse> walletInfoStream() async* {
-    debugPrint("Initialized walletInfoStream");
-    GetInfoRequest req = const GetInfoRequest(withScan: false);
-    yield await widget.liquidSDK.getInfo(req: req);
-    while (true) {
-      await Future.delayed(const Duration(seconds: 10));
-      yield await widget.liquidSDK.getInfo(req: req);
-      debugPrint("Refreshed wallet info");
-    }
-  }
-
-  Stream<List<Payment>> paymentsStream() async* {
-    debugPrint("Initialized paymentsStream");
-    yield await widget.liquidSDK.listPayments();
-    while (true) {
-      await Future.delayed(const Duration(seconds: 10));
-      yield await widget.liquidSDK.listPayments();
-      debugPrint("Refreshed payments");
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -71,13 +50,13 @@ class _HomePageState extends State<HomePage> {
                 Container(
                   height: constraints.maxHeight * 0.3,
                   color: Colors.white,
-                  child: Balance(walletInfoStream: walletInfoStream().asBroadcastStream()),
+                  child: Balance(walletInfoStream: widget.liquidSDK.walletInfoStream),
                 ),
                 Container(
                   height: constraints.maxHeight * 0.7,
                   color: Colors.white,
                   child: PaymentList(
-                    paymentsStream: paymentsStream().asBroadcastStream(),
+                    paymentsStream: widget.liquidSDK.paymentsStream,
                     onRefresh: () async => await _sync(),
                   ),
                 ),
@@ -85,12 +64,13 @@ class _HomePageState extends State<HomePage> {
             );
           },
         ),
-        drawer: HomePageDrawer(liquidSDK: widget.liquidSDK, credentialsManager: widget.credentialsManager),
-        floatingActionButton: QrActionButton(liquidSDK: widget.liquidSDK),
+        drawer: HomePageDrawer(
+            liquidSDK: widget.liquidSDK.wallet!, credentialsManager: widget.credentialsManager),
+        floatingActionButton: QrActionButton(liquidSDK: widget.liquidSDK.wallet!),
         floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
         bottomNavigationBar: HomePageBottomAppBar(
-          liquidSDK: widget.liquidSDK,
-          paymentsStream: paymentsStream().asBroadcastStream(),
+          liquidSDK: widget.liquidSDK.wallet!,
+          paymentsStream: widget.liquidSDK.paymentsStream,
         ),
       ),
     );
@@ -99,7 +79,7 @@ class _HomePageState extends State<HomePage> {
   Future<void> _sync() async {
     try {
       debugPrint("Syncing wallet.");
-      await widget.liquidSDK.sync();
+      await widget.liquidSDK.wallet!.sync();
       debugPrint("Wallet synced!");
     } on Exception catch (e) {
       final errMsg = "Failed to sync wallet. $e";
