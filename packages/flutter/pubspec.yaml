@@ -12,6 +12,7 @@ dependencies:
     sdk: flutter
   breez_liquid: ^0.1.0
   ffigen: ">=8.0.0 <=11.0.0"
+  rxdart: ^0.27.7
 
 dev_dependencies:
   flutter_test:
