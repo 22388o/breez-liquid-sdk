@@ -7,7 +7,7 @@ use log::{debug, error, info, warn};
 use tokio::sync::broadcast;
 
 use crate::model::PaymentState::{Complete, Created, Failed, Pending, TimedOut};
-use crate::model::{Config, Network, PaymentTxData, PaymentType, ReceiveSwap};
+use crate::model::{Config, PaymentTxData, PaymentType, ReceiveSwap};
 use crate::{ensure_sdk, utils};
 use crate::{
     error::PaymentError, model::PaymentState, persist::Persister, swapper::Swapper,
@@ -15,10 +15,10 @@ use crate::{
 };
 
 /// The minimum acceptable fee rate when claiming using zero-conf
-pub const LIQUID_SDK_ZERO_CONF_FEE_RATE_TESTNET: f32 = 0.1;
-pub const LIQUID_SDK_ZERO_CONF_FEE_RATE_MAINNET: f32 = 0.01;
+pub const DEFAULT_ZERO_CONF_MIN_FEE_RATE_TESTNET: f32 = 0.1;
+pub const DEFAULT_ZERO_CONF_MIN_FEE_RATE_MAINNET: f32 = 0.01;
 /// The maximum acceptable amount in satoshi when claiming using zero-conf
-pub const LIQUID_SDK_ZERO_CONF_LIMIT_SAT: u64 = 100_000;
+pub const DEFAULT_ZERO_CONF_MAX_SAT: u64 = 100_000;
 
 pub(crate) struct ReceiveSwapStateHandler {
     config: Config,
@@ -84,13 +84,14 @@ impl ReceiveSwapStateHandler {
 
                 // If the amount is greater than the zero-conf limit
                 // TODO Make limit user-definable through config
+                let max_amount_sat = self.config.zero_conf_max_amount_sat();
                 let receiver_amount_sat = receive_swap.receiver_amount_sat;
-                if receiver_amount_sat > LIQUID_SDK_ZERO_CONF_LIMIT_SAT {
-                    debug!("[Receive Swap {id}] Amount is too high to claim with zero-conf ({receiver_amount_sat} sat > {LIQUID_SDK_ZERO_CONF_LIMIT_SAT} sat). Waiting for confirmation...");
+                if receiver_amount_sat > max_amount_sat {
+                    debug!("[Receive Swap {id}] Amount is too high to claim with zero-conf ({receiver_amount_sat} sat > {max_amount_sat} sat). Waiting for confirmation...");
                     return Ok(());
                 }
 
-                debug!("[Receive Swap {id}] Amount is within valid range for zero-conf ({receiver_amount_sat} < {LIQUID_SDK_ZERO_CONF_LIMIT_SAT} sat)");
+                debug!("[Receive Swap {id}] Amount is within valid range for zero-conf ({receiver_amount_sat} < {max_amount_sat} sat)");
 
                 // If the transaction has RBF, see https://github.com/bitcoin/bips/blob/master/bip-0125.mediawiki
                 // TODO: Check for inherent RBF by ensuring all tx ancestors are confirmed
@@ -106,10 +107,7 @@ impl ReceiveSwapStateHandler {
 
                 // If the fees are higher than our estimated value
                 let tx_fees: u64 = lockup_tx.all_fees().values().sum();
-                let min_fee_rate = match self.config.network {
-                    Network::Mainnet => LIQUID_SDK_ZERO_CONF_FEE_RATE_MAINNET,
-                    Network::Testnet => LIQUID_SDK_ZERO_CONF_FEE_RATE_TESTNET,
-                };
+                let min_fee_rate = self.config.zero_conf_min_fee_rate;
                 let lower_bound_estimated_fees = lockup_tx.vsize() as f32 * min_fee_rate * 0.8;
 
                 if lower_bound_estimated_fees > tx_fees as f32 {
